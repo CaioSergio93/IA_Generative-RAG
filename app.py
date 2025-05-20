@@ -7,227 +7,219 @@ from langchain_openai import OpenAI, ChatOpenAI
 from langchain.chains import RetrievalQA, LLMChain
 from langchain.prompts import PromptTemplate
 import os
-from dotenv import load_dotenv
 import tempfile
 
 # Configuração inicial
-load_dotenv()
 st.set_page_config(page_title="ChatRAG Inteligente", page_icon="🧠")
+
+# Verificação de segurança
+def verificar_ambiente():
+    """Verifica se as configurações necessárias estão presentes"""
+    if 'openai' not in st.secrets or 'api_key' not in st.secrets.openai:
+        st.error("🔒 Configuração de API não encontrada. Verifique os segredos do aplicativo.")
+        st.stop()
 
 # Funções do sistema RAG
 def processar_pdf(uploaded_file):
-    """Processa um arquivo PDF carregado"""
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-        tmp_file.write(uploaded_file.getvalue())
-        tmp_path = tmp_file.name
-    
+    """Processa um arquivo PDF carregado de forma segura"""
     try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+            tmp_file.write(uploaded_file.getvalue())
+            tmp_path = tmp_file.name
+        
         loader = PyPDFLoader(tmp_path)
         documents = loader.load()
         return documents
+    except Exception as e:
+        st.error(f"Erro ao processar PDF: {str(e)}")
+        return None
     finally:
-        os.unlink(tmp_path)
+        if 'tmp_path' in locals() and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 def processar_documentos(documents):
-    """Divide os documentos em chunks para processamento"""
+    """Divide os documentos em chunks otimizados"""
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200,
         length_function=len,
         is_separator_regex=False
     )
-    texts = text_splitter.split_documents(documents)
-    return texts
+    return text_splitter.split_documents(documents)
 
 def criar_vetorstore(texts):
-    """Cria o banco de dados vetorial"""
+    """Cria o banco de dados vetorial com embeddings otimizados"""
     embedding_model = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2",
         model_kwargs={'device': 'cpu'},
         encode_kwargs={'normalize_embeddings': True}
     )
-    db = FAISS.from_documents(texts, embedding_model)
-    return db, embedding_model
+    return FAISS.from_documents(texts, embedding_model), embedding_model
 
 def carregar_modelo_llm():
-    """Carrega o modelo da OpenAI"""
-    if "OPENAI_API_KEY" not in os.environ:
-        raise ValueError("Chave API da OpenAI não configurada")
-    
-    return OpenAI(temperature=0.1, max_tokens=2000)
+    """Carrega o modelo da OpenAI com configurações otimizadas"""
+    return OpenAI(
+        temperature=0.1,
+        max_tokens=2000,
+        api_key=st.secrets.openai.api_key  # Acessa a chave dos segredos
+    )
 
 def criar_sistema_rag(db, embedding_model, llm):
-    """Configura a cadeia RAG completa"""
-    retriever = db.as_retriever(search_kwargs={"k": 3})
+    """Configura a cadeia RAG completa com busca semântica"""
+    retriever = db.as_retriever(
+        search_type="mmr",
+        search_kwargs={"k": 3, "fetch_k": 10}
+    )
     return RetrievalQA.from_chain_type(
         llm=llm,
         chain_type="stuff",
         retriever=retriever,
-        return_source_documents=True
+        return_source_documents=True,
+        verbose=False
     )
 
 def gerar_sugestoes_contextuais(documentos, llm):
-    """Gera sugestões de perguntas baseadas no conteúdo real dos documentos"""
-    # Primeiro extraímos trechos relevantes para análise
-    trechos_analise = []
-    for doc in documentos[:5]:  # Analisamos apenas os primeiros para performance
-        content = doc.page_content[:1000]  # Pegamos apenas o início para análise
-        trechos_analise.append(f"---\n{content}\n---")
-    
-    texto_analise = "\n".join(trechos_analise)[:5000]  # Limita o tamanho
-    
-    # Template para geração de perguntas
-    template = """
-    Com base nos seguintes trechos de documentos, gere 5 perguntas relevantes que
-    um usuário poderia fazer sobre este conteúdo. As perguntas devem ser específicas
-    e demonstrar compreensão do material.
-    
-    Trechos:
-    {texto}
-    
-    Perguntas sugeridas (uma por linha, em português):
-    1. 
-    """
-    
-    prompt = PromptTemplate(template=template, input_variables=["texto"])
-    chain = LLMChain(llm=ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3), prompt=prompt)
-    
+    """Gera perguntas contextualizadas usando análise de conteúdo"""
     try:
-        resultado = chain.run(texto=texto_analise)
-        perguntas = [p.strip() for p in resultado.split("\n") if p.strip() and p.strip()[0].isdigit()]
-        return [p.split(". ", 1)[1] for p in perguntas if ". " in p][:5]
+        # Análise dos 3 primeiros documentos para performance
+        contexto = "\n".join(doc.page_content[:500] for doc in documentos[:3])
+        
+        prompt = PromptTemplate.from_template("""
+        Com base nestes trechos de documentos, gere 3 perguntas específicas:
+        {contexto}
+
+        Perguntas relevantes (em português, numeradas):
+        1. """)
+        
+        chain = LLMChain(
+            llm=ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3),
+            prompt=prompt
+        )
+        resultado = chain.run(contexto=contexto)
+        return [p.split(". ", 1)[1] for p in resultado.split("\n") if ". " in p][:3]
     except Exception:
-        # Fallback para perguntas genéricas se houver erro
         return [
-            "Quais são os pontos principais deste documento?",
-            "Pode resumir as informações mais relevantes?",
-            "Quais dados ou estatísticas são apresentados?",
-            "Existem recomendações ou conclusões importantes?",
-            "Quem são as partes ou entidades mencionadas?"
+            "Quais são os pontos principais?",
+            "Há dados estatísticos relevantes?",
+            "Quais recomendações são apresentadas?"
         ]
 
 # Interface Streamlit
 def main():
     st.title("🧠 ChatRAG Inteligente")
-    st.caption("Faça upload de documentos e obtenha respostas inteligentes")
+    st.caption("Faça upload de documentos e converse com seu conteúdo")
     
-    # Sidebar
-    with st.sidebar:
-        st.header("Configurações")
-        if "OPENAI_API_KEY" not in os.environ:
-            st.error("Configure a OPENAI_API_KEY no ambiente")
-            return
-        
-        st.markdown("""
-        ### Como usar:
-        1. Carregue seus documentos
-        2. Aguarde o processamento
-        3. Faça perguntas ou use as sugestões
-        """)
-    
-    # Estado da sessão
+    # Verificação inicial
+    verificar_ambiente()
+
+    # Gerenciamento de estado
     if 'qa_chain' not in st.session_state:
-        st.session_state.qa_chain = None
-        st.session_state.documentos = []
-        st.session_state.sugestoes = []
-    
-    # Upload de documentos
+        st.session_state.update({
+            'qa_chain': None,
+            'documentos': [],
+            'sugestoes': [],
+            'messages': []
+        })
+
+    # Seção de upload de documentos
     if not st.session_state.qa_chain:
         st.subheader("📤 Carregar Documentos")
         uploaded_files = st.file_uploader(
             "Selecione arquivos PDF", 
             type="pdf",
-            accept_multiple_files=True
+            accept_multiple_files=True,
+            help="Você pode selecionar vários arquivos de uma vez"
         )
-        
-        if uploaded_files and st.button("Processar Documentos"):
+
+        if uploaded_files and st.button("Processar Documentos", type="primary"):
             with st.status("Processando...", expanded=True) as status:
                 try:
-                    st.write("Lendo arquivos PDF...")
+                    # Processamento em etapas com feedback
+                    st.write("🔍 Lendo documentos...")
                     documentos = []
                     for file in uploaded_files:
-                        st.write(f"Processando: {file.name}")
-                        documentos.extend(processar_pdf(file))
+                        docs = processar_pdf(file)
+                        if docs:
+                            documentos.extend(docs)
+                            st.write(f"✓ {file.name} processado")
                     
                     if not documentos:
                         st.error("Nenhum conteúdo válido encontrado")
                         return
-                    
+
                     st.session_state.documentos = documentos
                     
-                    st.write("Preparando documentos...")
+                    st.write("✂️ Dividindo conteúdo...")
                     textos = processar_documentos(documentos)
                     
-                    st.write("Criando banco de dados vetorial...")
+                    st.write("🧠 Criando índice de busca...")
                     db, embeddings = criar_vetorstore(textos)
                     
-                    st.write("Configurando modelo de IA...")
+                    st.write("⚙️ Configurando IA...")
                     llm = carregar_modelo_llm()
                     
-                    st.write("Gerando sugestões de perguntas...")
+                    st.write("💡 Gerando sugestões...")
                     st.session_state.sugestoes = gerar_sugestoes_contextuais(documentos, llm)
                     
-                    st.write("Criando sistema RAG...")
+                    st.write("🔗 Conectando sistema RAG...")
                     st.session_state.qa_chain = criar_sistema_rag(db, embeddings, llm)
                     
-                    status.update(label="Processamento completo!", state="complete")
-                    st.success("Pronto para perguntas!")
+                    status.update(label="✅ Processamento completo!", state="complete")
                     st.balloons()
                 except Exception as e:
-                    st.error(f"Erro: {str(e)}")
-    
-    # Seção de perguntas e respostas
+                    st.error(f"⚠️ Erro no processamento: {str(e)}")
+
+    # Seção de interação
     if st.session_state.qa_chain:
         st.divider()
         st.subheader("💬 Chat com os Documentos")
-        
-        # Mostrar sugestões
+
+        # Sugestões de perguntas
         if st.session_state.sugestoes:
-            st.markdown("**Sugestões de perguntas:**")
-            cols = st.columns(2)
+            st.markdown("**Sugestões:**")
+            cols = st.columns(3)
             for i, pergunta in enumerate(st.session_state.sugestoes):
-                with cols[i % 2]:
-                    if st.button(pergunta, key=f"sug_{i}", use_container_width=True):
+                with cols[i % 3]:
+                    if st.button(pergunta, key=f"sug_{i}", help="Clique para usar esta pergunta"):
                         st.session_state.pergunta = pergunta
-        
-        # Histórico de chat
-        if 'messages' not in st.session_state:
-            st.session_state.messages = []
-        
+
+        # Histórico de conversa
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
                 if "sources" in msg:
-                    with st.expander("Fontes"):
+                    with st.expander("📌 Fontes"):
                         for src in msg["sources"]:
                             st.caption(f"📄 {src['doc']} (página {src['page']})")
                             st.markdown(f"> {src['content']}")
-        
+
         # Input de pergunta
         if prompt := st.chat_input("Digite sua pergunta...") or st.session_state.get("pergunta"):
             if "pergunta" in st.session_state:
                 prompt = st.session_state.pergunta
                 del st.session_state.pergunta
             
+            # Adiciona pergunta ao histórico
             st.session_state.messages.append({"role": "user", "content": prompt})
+            
             with st.chat_message("user"):
                 st.markdown(prompt)
             
+            # Processa resposta
             with st.chat_message("assistant"):
-                with st.spinner("Pensando..."):
+                with st.spinner("Analisando..."):
                     try:
                         result = st.session_state.qa_chain({"query": prompt})
                         resposta = result["result"]
                         
                         st.markdown(resposta)
                         
-                        fontes = []
-                        for doc in result["source_documents"][:3]:
-                            fontes.append({
-                                "doc": os.path.basename(doc.metadata.get("source", "Documento")),
-                                "page": doc.metadata.get("page", "N/A"),
-                                "content": doc.page_content[:200] + "..."
-                            })
+                        # Extrai fontes
+                        fontes = [{
+                            "doc": os.path.basename(doc.metadata.get("source", "Documento")),
+                            "page": doc.metadata.get("page", "N/A"),
+                            "content": doc.page_content[:250] + "..."
+                        } for doc in result["source_documents"][:3]]
                         
                         st.session_state.messages.append({
                             "role": "assistant",
@@ -235,9 +227,11 @@ def main():
                             "sources": fontes
                         })
                     except Exception as e:
-                        st.error(f"Erro: {str(e)}")
-        
-        if st.button("🔄 Carregar Novos Documentos"):
+                        st.error(f"❌ Erro ao gerar resposta: {str(e)}")
+
+        # Controles
+        st.divider()
+        if st.button("🔄 Reiniciar com Novos Documentos", type="secondary"):
             st.session_state.clear()
             st.rerun()
 
