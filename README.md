@@ -12,21 +12,35 @@ O ChatRAG Inteligente é um sistema avançado de Perguntas e Respostas sobre Doc
 💡 Receba sugestões de perguntas baseadas no conteúdo
 
 ✨ Principais Funcionalidades
+
 ✅ Upload de múltiplos PDFs – Interface simples para carregar documentos
+
 ✅ Processamento automático – Extração e indexação inteligente do conteúdo
+
 ✅ Sugestões de perguntas contextualizadas – IA analisa o conteúdo e sugere perguntas relevantes
+
 ✅ Respostas baseadas em evidências – Sistema RAG busca nos documentos antes de responder
+
 ✅ Referência às fontes – Mostra exatamente de qual página/arquivo veio a informação
 
 🛠️ Tecnologias Utilizadas
+
 Tecnologia	Descrição
-Python	Linguagem principal
-Streamlit	Interface web interativa
-LangChain	Framework para sistemas RAG
-FAISS (Facebook AI Similarity Search)	Banco de dados vetorial para buscas semânticas
-OpenAI API (GPT-3.5-turbo)	Modelo de linguagem para respostas
-Hugging Face (all-MiniLM-L6-v2)	Modelo de embeddings para análise de texto
+
+Python -	Linguagem principal
+
+Streamlit -	Interface web interativa
+
+LangChain -	Framework para sistemas RAG
+
+FAISS (Facebook AI Similarity Search) -	Banco de dados vetorial para buscas semânticas
+
+OpenAI API (GPT-3.5-turbo) -	Modelo de linguagem para respostas
+
+Hugging Face (all-MiniLM-L6-v2) -	Modelo de embeddings para análise de texto
+
 🚀 Como Usar
+
 1️⃣ Executando Localmente
 Pré-requisitos
 Python 3.8+
@@ -67,6 +81,7 @@ IA_Generative-RAG/
 └── pdf/                  # Pasta para upload de documentos (opcional)
 
 📞 Contato
+
 💌 E-mail: caio.dev.system@gmail.com
 
 📸 Instagram: @caiosergiom
