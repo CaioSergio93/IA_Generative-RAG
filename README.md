@@ -66,6 +66,7 @@ Acesse no navegador:
 → http://localhost:8501
 
 2️⃣ Hospedagem na Nuvem (Streamlit Sharing / Hugging Face Spaces)
+
 Faça upload do projeto para um repositório Git (GitHub, GitLab, etc.)
 
 Configure a variável OPENAI_API_KEY nas configurações do serviço
@@ -75,6 +76,7 @@ Deploy automático no Streamlit Cloud ou Hugging Face
 📂 Estrutura do Projeto
 
 IA_Generative-RAG/
+
 ├── app.py                
 
 ├── requirements.txt      
