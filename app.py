@@ -1,199 +1,245 @@
-from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
+import streamlit as st
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAI  # Alterado para OpenAI
-from langchain.chains import RetrievalQA
-import warnings
+from langchain_openai import OpenAI, ChatOpenAI
+from langchain.chains import RetrievalQA, LLMChain
+from langchain.prompts import PromptTemplate
 import os
 from dotenv import load_dotenv
+import tempfile
+
+# Configuração inicial
 load_dotenv()
+st.set_page_config(page_title="ChatRAG Inteligente", page_icon="🧠")
 
-# Configuração de warnings
-warnings.filterwarnings('ignore')
-
-def carregar_documentos(pasta):
-    """Carrega todos os PDFs da pasta especificada"""
-    if not os.path.exists(pasta):
-        print(f"\n❌ Pasta '{pasta}' não encontrada")
-        print("ℹ️ Crie uma pasta 'pdf' e coloque seus documentos lá")
-        raise FileNotFoundError(f"Pasta '{pasta}' não existe")
+# Funções do sistema RAG
+def processar_pdf(uploaded_file):
+    """Processa um arquivo PDF carregado"""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+        tmp_file.write(uploaded_file.getvalue())
+        tmp_path = tmp_file.name
     
-    print(f"\n🔍 Carregando documentos da pasta '{pasta}'...")
     try:
-        loader = DirectoryLoader(
-            path=pasta,
-            glob="*.pdf",
-            loader_cls=PyPDFLoader,
-            show_progress=True
-        )
+        loader = PyPDFLoader(tmp_path)
         documents = loader.load()
-        total_paginas = sum(
-            len(pages) if isinstance(pages := doc.metadata.get('page', []), list) else 1 
-            for doc in documents
-        )
-        print(f"✅ {len(documents)} arquivos PDF carregados ({total_paginas} páginas)")
         return documents
-    except Exception as e:
-        print(f"\n❌ Falha ao carregar documentos: {str(e)}")
-        raise
+    finally:
+        os.unlink(tmp_path)
 
 def processar_documentos(documents):
     """Divide os documentos em chunks para processamento"""
-    print("\n✂️ Processando documentos...")
-    try:
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=512,
-            chunk_overlap=128,
-            length_function=len,
-            is_separator_regex=False
-        )
-        texts = text_splitter.split_documents(documents)
-        print(f"📚 {len(texts)} chunks criados para análise")
-        return texts
-    except Exception as e:
-        print(f"\n❌ Falha ao processar documentos: {str(e)}")
-        raise
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200,
+        length_function=len,
+        is_separator_regex=False
+    )
+    texts = text_splitter.split_documents(documents)
+    return texts
 
-def criar_vetorstore(texts, db_name="banco_vetorial"):
-    """Cria e salva o banco de dados vetorial"""
-    print("\n🧠 Configurando embeddings...")
-    try:
-        embedding_model = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
-        )
-        
-        print("🛢️ Criando banco de dados vetorial...")
-        db = FAISS.from_documents(texts, embedding_model)
-        db.save_local(db_name)
-        print(f"✅ Banco vetorial '{db_name}' criado ({db.index.ntotal} vetores)")
-        return db, embedding_model
-    except Exception as e:
-        print(f"\n❌ Falha ao criar vetorstore: {str(e)}")
-        raise
+def criar_vetorstore(texts):
+    """Cria o banco de dados vetorial"""
+    embedding_model = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        model_kwargs={'device': 'cpu'},
+        encode_kwargs={'normalize_embeddings': True}
+    )
+    db = FAISS.from_documents(texts, embedding_model)
+    return db, embedding_model
 
 def carregar_modelo_llm():
     """Carrega o modelo da OpenAI"""
-    print("\n⚙️ Configurando modelo OpenAI...")
-    try:
-        # Configure sua API key como variável de ambiente
-        if "OPENAI_API_KEY" not in os.environ:
-            raise ValueError("Chave API da OpenAI não encontrada. Configure OPENAI_API_KEY")
-        
-        llm = OpenAI(
-            model_name="gpt-3.5-turbo-instruct",  # Modelo mais rápido e econômico
-            temperature=0.1,
-            max_tokens=2000
-        )
-        print("✅ Modelo OpenAI carregado com sucesso!")
-        return llm
-    except Exception as e:
-        print(f"\n❌ Falha ao carregar modelo OpenAI: {str(e)}")
-        print("⚠️ Possíveis soluções:")
-        print("- Verifique se a variável OPENAI_API_KEY está configurada")
-        print("- Confira seu saldo/créditos na OpenAI")
-        print("- Verifique sua conexão com a internet")
-        raise
+    if "OPENAI_API_KEY" not in os.environ:
+        raise ValueError("Chave API da OpenAI não configurada")
+    
+    return OpenAI(temperature=0.1, max_tokens=2000)
 
 def criar_sistema_rag(db, embedding_model, llm):
     """Configura a cadeia RAG completa"""
-    print("\n🔗 Configurando sistema RAG...")
-    try:
-        retriever = db.as_retriever(
-            search_type="mmr",
-            search_kwargs={"k": 3, "fetch_k": 10}
-        )
-        
-        qa_chain = RetrievalQA.from_chain_type(
-            llm=llm,
-            chain_type="stuff",
-            retriever=retriever,
-            return_source_documents=True,
-            verbose=False
-        )
-        print("✅ Sistema RAG pronto para uso!")
-        return qa_chain
-    except Exception as e:
-        print(f"\n❌ Falha ao configurar sistema RAG: {str(e)}")
-        raise
+    retriever = db.as_retriever(search_kwargs={"k": 3})
+    return RetrievalQA.from_chain_type(
+        llm=llm,
+        chain_type="stuff",
+        retriever=retriever,
+        return_source_documents=True
+    )
 
-def ask_local_rag(qa_chain, question):
-    """Processa perguntas e mostra respostas formatadas"""
-    print(f"\n🔎 Processando: '{question}'")
-    try:
-        result = qa_chain.invoke({"query": question})
-        
-        print("\n💡 Resposta:")
-        print(result["result"].strip())
-        
-        if result["source_documents"]:
-            print("\n📚 Fontes utilizadas:")
-            for i, doc in enumerate(result["source_documents"][:3], 1):
-                source = os.path.basename(doc.metadata.get('source', 'documento'))
-                page = doc.metadata.get('page', 'N/A')
-                print(f"\n📌 Fonte {i}: {source} (Página {page})")
-                print("   " + doc.page_content[:250].replace('\n', ' ').strip() + "...")
-        else:
-            print("\nℹ️ Nenhuma fonte específica foi utilizada para esta resposta")
-            
-    except Exception as e:
-        print(f"\n⚠️ Erro ao processar pergunta: {str(e)}")
-
-def main():
-    """Função principal"""
-    # Configurações
-    PASTA_PDF = "pdf"
+def gerar_sugestoes_contextuais(documentos, llm):
+    """Gera sugestões de perguntas baseadas no conteúdo real dos documentos"""
+    # Primeiro extraímos trechos relevantes para análise
+    trechos_analise = []
+    for doc in documentos[:5]:  # Analisamos apenas os primeiros para performance
+        content = doc.page_content[:1000]  # Pegamos apenas o início para análise
+        trechos_analise.append(f"---\n{content}\n---")
+    
+    texto_analise = "\n".join(trechos_analise)[:5000]  # Limita o tamanho
+    
+    # Template para geração de perguntas
+    template = """
+    Com base nos seguintes trechos de documentos, gere 5 perguntas relevantes que
+    um usuário poderia fazer sobre este conteúdo. As perguntas devem ser específicas
+    e demonstrar compreensão do material.
+    
+    Trechos:
+    {texto}
+    
+    Perguntas sugeridas (uma por linha, em português):
+    1. 
+    """
+    
+    prompt = PromptTemplate(template=template, input_variables=["texto"])
+    chain = LLMChain(llm=ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3), prompt=prompt)
     
     try:
-        print("\n" + "="*50)
-        print("🚀 SISTEMA RAG COM OPENAI - INICIANDO")
-        print("="*50)
+        resultado = chain.run(texto=texto_analise)
+        perguntas = [p.strip() for p in resultado.split("\n") if p.strip() and p.strip()[0].isdigit()]
+        return [p.split(". ", 1)[1] for p in perguntas if ". " in p][:5]
+    except Exception:
+        # Fallback para perguntas genéricas se houver erro
+        return [
+            "Quais são os pontos principais deste documento?",
+            "Pode resumir as informações mais relevantes?",
+            "Quais dados ou estatísticas são apresentados?",
+            "Existem recomendações ou conclusões importantes?",
+            "Quem são as partes ou entidades mencionadas?"
+        ]
+
+# Interface Streamlit
+def main():
+    st.title("🧠 ChatRAG Inteligente")
+    st.caption("Faça upload de documentos e obtenha respostas inteligentes")
+    
+    # Sidebar
+    with st.sidebar:
+        st.header("Configurações")
+        if "OPENAI_API_KEY" not in os.environ:
+            st.error("Configure a OPENAI_API_KEY no ambiente")
+            return
         
-        # 1. Carregar e processar documentos
-        documentos = carregar_documentos(PASTA_PDF)
-        textos = processar_documentos(documentos)
+        st.markdown("""
+        ### Como usar:
+        1. Carregue seus documentos
+        2. Aguarde o processamento
+        3. Faça perguntas ou use as sugestões
+        """)
+    
+    # Estado da sessão
+    if 'qa_chain' not in st.session_state:
+        st.session_state.qa_chain = None
+        st.session_state.documentos = []
+        st.session_state.sugestoes = []
+    
+    # Upload de documentos
+    if not st.session_state.qa_chain:
+        st.subheader("📤 Carregar Documentos")
+        uploaded_files = st.file_uploader(
+            "Selecione arquivos PDF", 
+            type="pdf",
+            accept_multiple_files=True
+        )
         
-        # 2. Criar banco vetorial
-        banco_vetorial, embeddings = criar_vetorstore(textos)
+        if uploaded_files and st.button("Processar Documentos"):
+            with st.status("Processando...", expanded=True) as status:
+                try:
+                    st.write("Lendo arquivos PDF...")
+                    documentos = []
+                    for file in uploaded_files:
+                        st.write(f"Processando: {file.name}")
+                        documentos.extend(processar_pdf(file))
+                    
+                    if not documentos:
+                        st.error("Nenhum conteúdo válido encontrado")
+                        return
+                    
+                    st.session_state.documentos = documentos
+                    
+                    st.write("Preparando documentos...")
+                    textos = processar_documentos(documentos)
+                    
+                    st.write("Criando banco de dados vetorial...")
+                    db, embeddings = criar_vetorstore(textos)
+                    
+                    st.write("Configurando modelo de IA...")
+                    llm = carregar_modelo_llm()
+                    
+                    st.write("Gerando sugestões de perguntas...")
+                    st.session_state.sugestoes = gerar_sugestoes_contextuais(documentos, llm)
+                    
+                    st.write("Criando sistema RAG...")
+                    st.session_state.qa_chain = criar_sistema_rag(db, embeddings, llm)
+                    
+                    status.update(label="Processamento completo!", state="complete")
+                    st.success("Pronto para perguntas!")
+                    st.balloons()
+                except Exception as e:
+                    st.error(f"Erro: {str(e)}")
+    
+    # Seção de perguntas e respostas
+    if st.session_state.qa_chain:
+        st.divider()
+        st.subheader("💬 Chat com os Documentos")
         
-        # 3. Carregar modelo LLM
-        modelo_llm = carregar_modelo_llm()
+        # Mostrar sugestões
+        if st.session_state.sugestoes:
+            st.markdown("**Sugestões de perguntas:**")
+            cols = st.columns(2)
+            for i, pergunta in enumerate(st.session_state.sugestoes):
+                with cols[i % 2]:
+                    if st.button(pergunta, key=f"sug_{i}", use_container_width=True):
+                        st.session_state.pergunta = pergunta
         
-        # 4. Configurar sistema RAG
-        sistema_rag = criar_sistema_rag(banco_vetorial, embeddings, modelo_llm)
+        # Histórico de chat
+        if 'messages' not in st.session_state:
+            st.session_state.messages = []
         
-        # 5. Interface de usuário
-        print("\n" + "="*50)
-        print("💡 Dicas: Pergunte sobre os documentos carregados")
-        print("📋 Exemplos:")
-        print("- 'Resuma os principais pontos do documento'")
-        print("- 'Quais são as despesas mais relevantes?'")
-        print("- 'Compare informações entre diferentes páginas'")
-        print("Digite 'sair' para encerrar")
-        print("="*50)
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+                if "sources" in msg:
+                    with st.expander("Fontes"):
+                        for src in msg["sources"]:
+                            st.caption(f"📄 {src['doc']} (página {src['page']})")
+                            st.markdown(f"> {src['content']}")
         
-        while True:
-            try:
-                pergunta = input("\n❓ Sua pergunta: ").strip()
-                if pergunta.lower() in ['sair', 'exit', 'quit']:
-                    break
-                if pergunta:
-                    ask_local_rag(sistema_rag, pergunta)
-                else:
-                    print("⚠️ Por favor, digite uma pergunta válida")
-            except KeyboardInterrupt:
-                print("\n⚠️ Operação interrompida pelo usuário")
-                break
-                
-    except Exception as e:
-        print(f"\n❌ ERRO CRÍTICO: {str(e)}")
-    finally:
-        print("\n🔴 Sistema encerrado")
+        # Input de pergunta
+        if prompt := st.chat_input("Digite sua pergunta...") or st.session_state.get("pergunta"):
+            if "pergunta" in st.session_state:
+                prompt = st.session_state.pergunta
+                del st.session_state.pergunta
+            
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            
+            with st.chat_message("assistant"):
+                with st.spinner("Pensando..."):
+                    try:
+                        result = st.session_state.qa_chain({"query": prompt})
+                        resposta = result["result"]
+                        
+                        st.markdown(resposta)
+                        
+                        fontes = []
+                        for doc in result["source_documents"][:3]:
+                            fontes.append({
+                                "doc": os.path.basename(doc.metadata.get("source", "Documento")),
+                                "page": doc.metadata.get("page", "N/A"),
+                                "content": doc.page_content[:200] + "..."
+                            })
+                        
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": resposta,
+                            "sources": fontes
+                        })
+                    except Exception as e:
+                        st.error(f"Erro: {str(e)}")
+        
+        if st.button("🔄 Carregar Novos Documentos"):
+            st.session_state.clear()
+            st.rerun()
 
 if __name__ == "__main__":
-    # Configure sua API key antes de executar
-    os.environ["OPENAI_API_KEY"] = "sua-chave-aqui"
-    #os.environ["OPENAI_API_KEY"] = ""
     main()
