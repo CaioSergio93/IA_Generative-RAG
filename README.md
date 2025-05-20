@@ -73,12 +73,17 @@ Configure a variável OPENAI_API_KEY nas configurações do serviço
 Deploy automático no Streamlit Cloud ou Hugging Face
 
 📂 Estrutura do Projeto
+
 IA_Generative-RAG/
-├── app.py                # Código principal (Streamlit)
-├── requirements.txt      # Dependências Python
-├── .env.example          # Modelo para variáveis de ambiente
-├── README.md             # Documentação
-└── pdf/                  # Pasta para upload de documentos (opcional)
+├── app.py                
+
+├── requirements.txt      
+
+├── .env.example         
+
+├── README.md             
+
+└── pdf/                  
 
 📞 Contato
 
