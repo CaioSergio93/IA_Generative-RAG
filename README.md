@@ -65,8 +65,10 @@ IA_Generative-RAG/
 ├── .env.example          # Modelo para variáveis de ambiente
 ├── README.md             # Documentação
 └── pdf/                  # Pasta para upload de documentos (opcional)
+
 📞 Contato
 💌 E-mail: caio.dev.system@gmail.com
+
 📸 Instagram: @caiosergiom
 
 📜 Licença
